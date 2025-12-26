@@ -1,0 +1,1123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Terminal Audio — Multi-Station Player</title>
+<style>
+  :root{
+    --bg:#04150a;
+    --panel:#062018;
+    --glow:#00ff66;
+    --text:#b8ffd1;
+    --muted:#07321a;
+    --accent:#00e060;
+    --font: "Lucida Console", Monaco, monospace;
+  }
+
+  /* page + safe-area */
+  html,body{height:100%;margin:0;background:linear-gradient(180deg,var(--bg),#00120c);font-family:var(--font);color:var(--text)}
+  html, body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+
+  .wrap{max-width:1100px;margin:30px auto;padding:18px;border-radius:8px;background:linear-gradient(90deg,var(--panel),#02150e);box-shadow:0 10px 40px rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.02)}
+  header{display:flex;align-items:center;gap:12px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.02);color:var(--glow)}
+  .dot{width:12px;height:12px;border-radius:50%;background:var(--glow);box-shadow:0 0 10px var(--glow)}
+  .titleCols{display:flex;flex-direction:column}
+  .titleMain{font-size:18px;font-weight:700}
+  .titleSub{font-size:12px;color:var(--muted)}
+
+  /* responsive two-column layout: right column minmax so it can shrink on phones */
+  .layout{display:grid;grid-template-columns:1fr minmax(260px, 380px);gap:14px;margin-top:12px}
+
+  /* use responsive height instead of fixed 640px so webviews don't clip */
+  .panel{padding:10px;border-radius:8px;background:linear-gradient(180deg, rgba(0,0,0,.06), rgba(0,0,0,.02));height:min(80vh,720px);overflow:hidden;position:relative;border:1px solid rgba(255,255,255,.03)}
+  .list{height:100%;overflow:auto;padding:10px;outline:none;-webkit-overflow-scrolling:touch}
+  .track{padding:10px 12px;margin:8px 0;border-radius:8px;display:flex;justify-content:space-between;gap:10px;border:1px solid rgba(255,255,255,.03);transition:transform .08s, background .12s}
+  .track .meta{font-size:13px}
+  .track .len{font-size:12px;color:rgba(255,255,255,.6)}
+  .track:hover{transform:translateX(6px);background:rgba(255,255,255,.02)}
+
+  /* Active song white highlight */
+  .track.active{
+    background:#ffffff;
+    color:#000;
+    border:1px solid rgba(0,0,0,.12);
+    box-shadow:0 6px 18px rgba(0,0,0,.25);
+  }
+
+  .footer{position:absolute;left:0;right:0;bottom:0;padding:12px;border-top:1px dashed rgba(255,255,255,.03);display:flex;justify-content:space-between;align-items:center;background:linear-gradient(180deg, rgba(0,0,0,.01), rgba(0,0,0,.03))}
+  button{background:transparent;border:1px solid rgba(255,255,255,.06);color:var(--text);padding:8px 10px;border-radius:8px;cursor:pointer;transition:background .12s, color .12s;-webkit-tap-highlight-color:transparent}
+  button:active{transform:translateY(1px)}
+  .controls{display:flex;gap:10px;align-items:center}
+  .btn-shuffle.active{
+    background:#ffffff;
+    color:var(--bg);
+    border-color:rgba(0,0,0,.06);
+    box-shadow:0 6px 18px rgba(0,0,0,.18);
+  }
+  .volume{display:flex;align-items:center;gap:8px}
+  .mutedNote{font-size:12px;color:rgba(255,255,255,.6)}
+  .searchRow{display:flex;flex-direction:column;gap:8px}
+  input.searchBox{background:transparent;border:1px solid rgba(255,255,255,.04);padding:8px;border-radius:8px;color:var(--text);outline:none;width:100%}
+  .stations{padding:8px;margin-top:12px;border-radius:8px;background:rgba(0,0,0,.03);height:360px;overflow:auto;border:1px solid rgba(255,255,255,.02);-webkit-overflow-scrolling:touch}
+  .station{padding:10px;border-radius:8px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;cursor:pointer;border:1px solid rgba(255,255,255,.02);transition:transform .08s, filter .08s;-webkit-tap-highlight-color:transparent}
+  .station:hover{transform:translateX(4px);filter:brightness(1.04)}
+  .station.active{outline:2px solid rgba(255,255,255,.06);box-shadow:0 8px 24px rgba(0,0,0,.28)}
+  .stationRow{display:flex;align-items:center;gap:12px}
+  .stationColor{width:14px;height:14px;border-radius:3px;flex:0 0 auto;box-shadow:0 0 10px rgba(255,255,255,.03)}
+  .small{font-size:12px;color:rgba(255,255,255,.6)}
+  .now{padding:12px;border-radius:8px;background:rgba(0,0,0,.04);border:1px solid rgba(255,255,255,.02)}
+  .progress{height:12px;background:rgba(255,255,255,.05);border-radius:8px;overflow:hidden;cursor:pointer;position:relative}
+  .bar{height:100%;background:linear-gradient(90deg,var(--accent),#fff2ff);width:0%;transition:width .08s linear}
+  .progHandle{position:absolute;top:50%;transform:translateY(-50%);width:14px;height:14px;border-radius:50%;background:rgba(255,255,255,.9);box-shadow:0 2px 6px rgba(0,0,0,.3);display:none}
+  .progress.dragging .progHandle{display:block}
+  .volPercent{width:44px;text-align:right;font-size:12px;color:var(--muted)}
+  /* text adjustments when theme changes: use --text for main textual color */
+  .wrap .big { color: var(--text); }
+
+  /* mobile-friendly tweaks */
+  input[type="range"] { touch-action: none; -webkit-appearance: none; height: 20px; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3);}
+  @media (max-width: 700px) {
+    .layout { grid-template-columns: 1fr; }
+    .panel { height: auto; min-height: 64vh; }
+    .stations { height: 340px; }
+    .station { padding:14px; }
+    input[type="range"] { height:28px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap" role="application" aria-label="Multi-station audio player">
+  <header>
+    <div class="dot" aria-hidden="true"></div>
+    <div class="titleCols">
+      <div class="titleMain">TERMINAL AUDIO</div>
+      <div class="titleSub">Multi‑Station Player</div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- left: track list -->
+    <div class="panel" id="leftPanel">
+      <div class="list" id="trackList" tabindex="0" aria-label="Music list"></div>
+
+      <div class="footer">
+        <div class="small">Use Up/Down or tap; Enter to play</div>
+        <div id="status">Idle</div>
+      </div>
+    </div>
+
+    <!-- right: player + stations -->
+    <div class="panel" id="rightPanel">
+      <div class="metaBox">
+        <div class="now">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <strong id="nowTitle">Not Playing</strong>
+              <div id="nowArtist" style="font-size:12px;color:var(--muted)">-</div>
+            </div>
+            <div id="nowLen" class="small">00:00</div>
+          </div>
+
+          <div style="height:10px"></div>
+
+          <!-- Progress bar (clickable / draggable) -->
+          <div class="progress" id="progressTrack" aria-hidden="true" title="Click or drag to seek">
+            <div class="bar" id="progBar"></div>
+            <div class="progHandle" id="progHandle"></div>
+          </div>
+        </div>
+
+        <div style="height:12px"></div>
+
+        <div style="display:flex;gap:10px;align-items:center">
+          <div class="controls" role="group" aria-label="Playback controls">
+            <button id="btnPrev">Prev</button>
+            <button id="btnPlay">Play</button>
+            <button id="btnNext">Next</button>
+            <button id="btnShuffle" class="btn-shuffle" title="Shuffle">Shuffle</button>
+          </div>
+
+          <div style="flex:1"></div>
+
+        </div>
+
+        <div style="height:12px"></div>
+
+        <div class="searchRow">
+          <input id="search" class="searchBox" placeholder="Filter tracks..." />
+          <!-- Volume placed below the filter as requested -->
+          <div style="display:flex;align-items:center;gap:8px">
+            <label style="font-size:13px;color:var(--muted)">Vol</label>
+            <input id="vol" type="range" min="0" max="1" step="0.01" value="0.90" />
+            <div id="volVal" class="volPercent">90%</div>
+          </div>
+        </div>
+
+        <div style="height:12px"></div>
+
+        <strong style="font-size:13px;color:var(--glow)">Stations</strong>
+        <div class="stations" id="stationsList" aria-label="Radio stations list"></div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+          <div class="mutedNote">Interface sounds: audio/interface/*</div>
+          <div class="small">Tracks loaded from <strong id="currentFolder">pipboy/</strong></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/*
+  Updated to improve iPhone / Inkoder webview compatibility:
+  - Responsive panel heights (min(max) viewport-based) so webviews don't clip content
+  - -webkit-overflow-scrolling: touch on scrollable areas
+  - Tap-to-enable overlay to satisfy iOS user-gesture requirement for audio play
+  - Minor re-init after load to avoid initial zero-height race in some webviews
+  - Other UI tweaks preserved (colors, stations, tracks)
+*/
+
+/* interface sounds expected at audio/interface/ */
+const INTERFACE = {
+  cursor: 'audio/interface/cursor.wav',
+  select: 'audio/interface/select.wav',
+  scroll: 'audio/interface/scroll.wav'
+};
+const uiSounds = {};
+for (const k in INTERFACE) {
+  uiSounds[k] = new Audio(INTERFACE[k]);
+  uiSounds[k].preload = 'auto';
+  uiSounds[k].volume = 0.9;
+}
+
+/* audio element */
+let musicAudio = new Audio();
+musicAudio.preload = 'metadata';
+musicAudio.volume = 0.9;
+
+/* DOM refs */
+const listEl = document.getElementById('trackList');
+const nowTitle = document.getElementById('nowTitle');
+const nowArtist = document.getElementById('nowArtist');
+const nowLen = document.getElementById('nowLen');
+const progBar = document.getElementById('progBar');
+const progTrack = document.getElementById('progressTrack');
+const progHandle = document.getElementById('progHandle');
+const status = document.getElementById('status');
+const stationsEl = document.getElementById('stationsList');
+const currentFolderEl = document.getElementById('currentFolder');
+const volInput = document.getElementById('vol');
+const volVal = document.getElementById('volVal');
+const btnShuffle = document.getElementById('btnShuffle');
+
+let currentStationKey = 'pipboy';
+let currentIndex = -1;
+let filteredIndexes = [];
+let TRACKS = [];
+let playOrder = [];
+let playPos = 0;
+let shuffleEnabled = false;
+
+/* color themes (added the requested colors) */
+const COLORS = {
+  pipboy: { bg:'#04150a', panel:'#062018', glow:'#00ff66', text:'#b8ffd1', accent:'#00e060' },
+  cyberRed: { bg:'#190609', panel:'#2b0909', glow:'#ff0044', text:'#ffdfe6', accent:'#ff4d6d' },
+  saintsPurple: { bg:'#0f0410', panel:'#130116', glow:'#b84bff', text:'#f6eaff', accent:'#d89cff' },
+  lightBlue: { bg:'#071529', panel:'#072235', glow:'#7fd5ff', text:'#dff7ff', accent:'#7fd5ff' },
+
+  /* original small palette */
+  red: { bg:'#2a0b0b', panel:'#3a0f0f', glow:'#ff4766', text:'#ffe9ea', accent:'#ff6b82' },
+  green: { bg:'#062014', panel:'#08271a', glow:'#66ffb3', text:'#eafff0', accent:'#00e060' },
+  amber: { bg:'#271400', panel:'#3a2007', glow:'#ffb84d', text:'#fff2da', accent:'#ffb84d' },
+
+  /* NEW: requested colors */
+  rainbowPink: { bg:'#2b001b', panel:'#3a0426', glow:'#ff8fcf', text:'#ffeefd', accent:'#ff8fcf' },
+  hotPink: { bg:'#300017', panel:'#3d0023', glow:'#ff2aa8', text:'#ffeaf5', accent:'#ff2aa8' },
+  yellow: { bg:'#2a2400', panel:'#403200', glow:'#fff86b', text:'#fffbe6', accent:'#fff86b' },
+  lymeGreen: { bg:'#0b1f0a', panel:'#0e2a0f', glow:'#c8ff2b', text:'#f7ffd9', accent:'#c8ff2b' },
+  white: { bg:'#111111', panel:'#1a1a1a', glow:'#ffffff', text:'#ffffff', accent:'#ffffff' },
+  magenta: { bg:'#20101f', panel:'#2a1028', glow:'#ff00d9', text:'#ffe6fb', accent:'#ff00d9' }
+};
+
+/* keep a snapshot of original keys so we can detect newly added stations and default them to lightBlue */
+const ORIGINAL_KEYS = Object.keys({
+  "88 9 Pacific Dreams":1,"89 7 Growl Fm":1,"SRIV 89GENX":1,"98 7 Body Heat Radio":1,"FOUR20":1,"K12 Radio":1,"KLASSIC":1,"KRHYME":1,"MAD DECENT":1,"pipboy":1,"The Mix":1
+});
+
+/* STATIONS and full track lists preserved (exact folder/filenames from your upload).
+   For brevity here it's identical to your input; nothing has been removed.
+*/
+const STATIONS = {
+
+  "88 9 Pacific Dreams": {
+    folder: "88 9 Pacific Dreams/",
+    tracks: [
+      "Flatlander Woman - Lithium (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Flatlander Woman - Slag (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Jänsens - Simple Pleasures (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Left Unsaid - Retrogenesis (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Lick Switch - Blurred (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Lick Switch - Midnight Eye (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Lick Switch - The Other Room (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Mona Mitchell - Ice Maddox (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Muchomorr - Chodze (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Pacific Avenue - Antagonistic (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Quantum Lovers - Isometric Air (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Quantum Lovers - Practical Heart (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Quantum Lovers - Real Window (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Sonoris Causa - La Stessa Causa (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Talk to Us - Miami Suicide (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Talk to Us - Miami Suicide (Fixed Pitch).mp3",
+      "Talk to Us - Slippery Stabs (Cyberpunk 2077 88.9 Pacific Dreams).mp3",
+      "Wormview - Ashes and Diamonds (Cyberpunk 2077 88.9 Pacific Dreams).mp3"
+    ]
+  },
+
+  "89 7 Growl Fm": {
+    folder: "89 7 Growl Fm/",
+    tracks: [
+      "Aleyna Moon & Shrinjay Ghosh - Fumes (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "Coeur Noir - Let The Stars Die (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — Afterlife by Thai McGrath ft. JustCosplaySings (89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — Candy Shell by Spirit Machines (89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — Do or Die by NoWorld (89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — El Tiempo by Skin On Flesh (89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — Flatline by Red Dead Roadkill (89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — FUMES by Aleyna Moon, Shrinjay Ghosh (89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — Going to Heaven by St. Aurora (89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — Killshot by Frost, Justtjokay, Dubbygotbars, Knyvez (89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — Let It Go as If You Wander by Haru Nemuri (89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — Let the stars die by Coeur Noir (89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — LIT by Entolim (89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — Look Through My Kiroshi's (The Solo Life) by D.O.H. (89.7 Growl FM).mp3",
+      "Cyberpunk 2077 — Slipstream by Kiba (89.7 Growl FM).mp3",
+      "D.O.H. Dollahz Ova Hoez - Look Through My Kiroshi's (The Solo Life) (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "Entolim - LIT (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "ESAI & Pure 100% - Nebula (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "Frost, Justtjokay, Dubbygotbard & Knyvez - Killshot (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "Haru Nemuri - Let It Go as If You Wander (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "Kiba - Slipstream (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "NoWorld - Do or Die (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "Red Dead Roadkill - Flatline (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "Skin On Flesh - El Tiempo (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "Spirit Machines - Candy Shell (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "St. Aurora - Going to Heaven (Cyberpunk 2077 89.7 Growl FM).mp3",
+      "Thai McGrath & Just Cosplay Sings - Afterlife (Cyberpunk 2077 89.7 Growl FM).mp3"
+    ]
+  },
+
+  "SRIV 89GENX": {
+    folder: "SRIV 89GENX/",
+    tracks: [
+      "Jr. - Lost Desire.mp3",
+      "Saints Row The Third - Radio 89.0 Generation X FM - Clarion-Call.mp3",
+      "Saints Row The Third - Radio 89.0 Generation X FM - Deftones - Diamond Eyes.mp3",
+      "Saints Row The Third - Radio 89.0 Generation X FM - Heavy Young Heathens - Sha La La La La.mp3",
+      "Saints Row The Third - Radio 89.0 Generation X FM - JR - Lost Desire.mp3",
+      "Saints Row The Third - Radio 89.0 Generation X FM - Miike Snow - Animal.mp3",
+      "Saints Row The Third - Radio 89.0 Generation X FM - Sleigh Bells - Riot Rhythm.mp3",
+      "Saints Row The Third - Radio 89.0 Generation X FM - The Black Keys - Next Girl.mp3",
+      "Saints Row The Third - Radio 89.0 Generation X FM - The Dear Hunter - In Cauda Venenum.mp3",
+      "Saints Row The Third - Radio 89.0 Generation X FM - The Do - Queen Dot Kong.mp3",
+      "Saints Row The Third - Radio 89.0 Generation X FM - The Lines - El Matador.mp3",
+      "Saints Row The Third - Radio 89.0 Generation X FM -Dragonette - Stupid Grin.mp3",
+      "The Black Cadillacs - Choke.mp3"
+    ]
+  },
+
+  "98 7 Body Heat Radio": {
+    folder: "98 7 Body Heat Radio/",
+    tracks: [
+      "CYBERPUNK 2077 - THE GOD MACHINES by Sebastian Robertson Killl The Computer Indijinouz.mp3",
+      "Cyberpunk Edgerunners — Ending Theme   Let You Down by Dawid Podsiadło.mp3",
+      "American Medical Association - Blind (Cyberpunk 2077 98.7 Body Heat Radio) (1).mp3",
+      "American Medical Association - Blind (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "Artemis Delta - Night City (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "Clockwork Venus - BM (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "Hallie Coggins - I Really Want to Stay at Your House (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "IBDY - Crustpunk (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "IBDY - Here's a Thought (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "Lizzy Wizzy - 4ÆM (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "Lizzy Wizzy - Delicate Weapon (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "Neon Haze - Circus Minimus (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "Point Break Candy - Hole in the Sun (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "Trash Generation - History (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "Us Cracks - Off the Leash (feat. Kerry Eurodyne) (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "Us Cracks - PonPon Shit (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "Us Cracks - User Friendly (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "Window Weather - Major Crimes (Cyberpunk 2077 98.7 Body Heat Radio).mp3",
+      "CYBERPUNK 2077 SOUNDTRACK - HELLO GOOD MORNING by Konrad OldMoney feat. S-God & Pazoozu.mp3",
+      "Whos Ready for Tomorrow.mp3"
+    ]
+  },
+
+  "FOUR20": {
+    folder: "FOUR20/",
+    tracks: [
+      "Born Jamericans - Cease & Seckle.mp3",
+      "Charly Black And J Capri - Wine & Kotch.mp3",
+      "Delroy Wilson - You Never Get Away.mp3",
+      "Dennis Brown - Milk And Honey.mp3",
+      "Early B - History Of Jamaica.mp3",
+      "Easy Star All Stars - One Likkle Draw.mp3",
+      "Eek A Mouse - Wa Do Dem.mp3",
+      "Max Romeo - Juks.mp3",
+      "Ranking Dread - Fattie Boom Boom.mp3",
+      "Super Beagle - Dust A Sound Boy.mp3",
+      "Tenor Saw - Ring The Alarm.mp3",
+      "The In Crowd - Mango Walk.mp3",
+      "Toots & The Maytals - Pressure Drop (Ska Version).mp3",
+      "Vybz Kartel - Picture This.mp3",
+      "Wayne Smith - Under Me Sleng Teng.mp3"
+    ]
+  },
+
+  "K12 Radio": {
+    folder: "K12 Radio/",
+    tracks: [
+      "Alex Metric - Prophecies.mp3",
+      "Apashe - Eat My Apple.mp3",
+      "Congorock - Ivory (The Bloody Beetroots Remix).mp3",
+      "Datsik & Excision - Vindicate.mp3",
+      "Datsik - Bonafide Hustler (Trap VIP).mp3",
+      "Doctor P - Flying Spaghetti Monster.mp3",
+      "Flux Pavilion - Blow The Roof.mp3",
+      "Gigamesh - All My Life.mp3",
+      "Junkie XL - Giraffe.mp3",
+      "Kill Paris - Slap Me.mp3",
+      "Kirkwood West - Speed Ball.mp3",
+      "NERO - Promises.mp3",
+      "The Bloody Beetroots - The Source (Chaos & Confusion).mp3",
+      "The Knocks And Fred Falke - Geronimo.mp3",
+      "Vitalic - Stamina.mp3",
+      "Watch The Duck - Poppin' Off.mp3",
+      "[Saints Row IV] K12 Radio - Datsik - Bonafide Hustler.mp3",
+      "Draztic Music feat. Erk Tha Jerk - Give Me That Bass (Saints Row IV).mp3"
+    ]
+  },
+
+  "KLASSIC": {
+    folder: "KLASSIC/",
+    tracks: [
+      "Chopin Grande Valse Brillante Op. 18 Valentina Lisitsa.mp3",
+      "George Bizet Carmen Suite 1 - Aragonaise.mp3",
+      "Georges Bizet -  Les Toreadors  from Carmen Suite No. 1.mp3",
+      "Georges Bizet -Carmen Instrumental..mp3",
+      "Giuseppe Verdi - La donna e mobile (Rigoletto).mp3",
+      "Gustav Holst - Mars.mp3",
+      "Johann Strauss II - Die Fledermaus Overture.mp3",
+      "Johann Strauss Sr. - Radetzky March.mp3",
+      "Mussorgsky - Night on Bald Mountain.mp3",
+      "Offenbach - Infernal Galop.mp3",
+      "Pyotr Ilyich Tchaikovsky - Swan Lake - Finale.mp3",
+      "Rossini - The Barber of Seville Largo Al Factotum (Figaro) [HQ].mp3",
+      "Symphony No. 9 in D Minor Choral Op. 125  Ode to Joy.mp3",
+      "Tchaikovsky - The Nutcracker Suite, Op 71a.mp3",
+      "Toccata and Fugue in D Minor (Best Version Ever).mp3"
+    ]
+  },
+
+  "KRHYME": {
+    folder: "KRHYME/",
+    tracks: [
+      "Amerie feat. Eve - One Thing.mp3",
+      "Beanie Sigel - What a thug.mp3",
+      "Big Pun feat. Fat Joe - Twinz.mp3",
+      "DJ Quik - Fandango.mp3",
+      "Joe Budden ft Nate Dogg - Gangsta Party.mp3",
+      "Kellis - Trick me.mp3",
+      "Lloyd Banks feat. 50 Cent - Hands Up.mp3",
+      "Nas - NY State of Mind.mp3",
+      "Ne-Yo -So Sick..mp3",
+      "Run DMC - Sucker Mcs.mp3",
+      "The Alchemist ft Lloyd Banks - Bangers.mp3",
+      "The Mysterious BIG - Fallout 4 Mod .mp3",
+      "Wale - Riding in the Black Joint.mp3",
+      "Young Jeezy - I luv it.mp3"
+    ]
+  },
+
+  "MAD DECENT": {
+    folder: "MAD DECENT/",
+    tracks: [
+      "Bonde Do Rolê ft CeCile - Brazilian Boys.mp3",
+      "Clockwork - Titan.mp3",
+      "Dillon Francis - I.D.G.A.F.O.S.mp3",
+      "Dillon Francis ft Simon Lord - Messages.mp3",
+      "Diplo ft Nicky Da B - Express Yourself.mp3",
+      "DJ Snake ft Alesia - Bird Machine.mp3",
+      "Djemba Djemba - I Just Go.mp3",
+      "ETC!ETC! & Brillz - Swoop.mp3",
+      "ETC!ETC! & Brillz ft Diplo And Whiskey Pete - Bueller.mp3",
+      "GTA (Good Times Ahead) ft DJ Funk - Booty Bounce.mp3",
+      "Jahan Lennon - Can't Ruin My Fun.mp3",
+      "LIZ ft Riff Raff - Underdogs.mp3",
+      "Riff Raff - Rookie Of The Year.mp3",
+      "T.K.O (Toadally Krossed Out) ft Riff Raff - Cray.mp3",
+      "Three Loco - Beer.mp3",
+      "Yellow Claw - W.O.L.F.mp3",
+      "Zeds Dead - Demons.mp3",
+	  "Grape Drank kavas nonalcaholic clean boozaka .mp3"
+    ]
+  },
+
+  "pipboy": {
+    folder: "pipboy/",
+    tracks: [
+      "1941 (feat. Virian) (Official Audio)   Klaypex.mp3",
+      "6. I MONSTER - Who Is She.mp3",
+      "A Hat in Time - Let's Dance.mp3",
+      "Ain't That a Kick in the Head  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "American Swing  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Big Iron  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Big Noise from Winnetka.mp3",
+      "Billy Eckstine - Blue Moon.mp3",
+      "Blue Moon  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Caravan Palace - Clash.mp3",
+      "Caravan Palace - Lone Digger (Album version).mp3",
+      "Connor spiotto - The villain i appear to be.mp3",
+      "Fallout 4 Soundtrack - Betty Hutton - He's a Demon [HQ].mp3",
+      "Fallout 4 Soundtrack - Betty Hutton - It's a Man [HQ].mp3",
+      "Fallout 4 Soundtrack - Big Maybelle - Whole Lotta Shakin' Goin' On [HQ].mp3",
+      "Fallout 4 Soundtrack - Billie Holiday - Crazy He Calls Me [HQ].mp3",
+      "Fallout 4 Soundtrack - Billie Holiday - Easy Living [HQ].mp3",
+      "Fallout 4 Soundtrack - Billy Ward and The Dominoes - Sixty Minute Man [HQ].mp3",
+      "Fallout 4 Soundtrack - Bing Crosby - Accentuate The Positive [HQ].mp3",
+      "Fallout 4 Soundtrack - Bing Crosby - Pistol Packin' Mama [HQ].mp3",
+      "Fallout 4 Soundtrack - Bob Crosby - Dear Hearts and Gentle People [HQ].mp3",
+      "Fallout 4 Soundtrack - Bob Crosby - Happy Times [HQ].mp3",
+      "Fallout 4 Soundtrack - Bob Crosby - Way Back Home [HQ].mp3",
+      "Fallout 4 Soundtrack - Cole Porter - Anything Goes [HQ].mp3",
+      "Fallout 4 Soundtrack - Connie Allen - Rocket 69 [HQ].mp3",
+      "Fallout 4 Soundtrack - Danny Kaye - Civilization [HQ].mp3",
+      "Fallout 4 Soundtrack - Dion - The Wanderer.mp3",
+      "Fallout 4 Soundtrack - Ella Fitzgerald - Undecided.mp3",
+      "Fallout 4 Soundtrack - Ella Fitzgerald with The Ink Spots - Into Each Life [HQ].mp3",
+      "Fallout 4 Soundtrack - Elton Britt - Uranium Fever [HQ].mp3",
+      "Fallout 4 Soundtrack - Frankie Carle - One More Tomorrow [HQ].mp3",
+      "Fallout 4 Soundtrack - Johnny Mercer - Personality [HQ].mp3",
+      "Fallout 4 Soundtrack - Louis Jordan - Keep-a-Knockin' [HQ].mp3",
+      "Fallout 4 Soundtrack - Nat King Cole - Orange Colored Sky [HQ].mp3",
+      "Fallout 4 Soundtrack - Ray Smith - Right Behind You Baby [HQ].mp3",
+      "Fallout 4 Soundtrack - Roy Brown - Butcher Pete (Part 1) [HQ].mp3",
+      "Fallout 4 Soundtrack - Roy Brown - Butcher Pete (Part 2) [HQ].mp3",
+      "Fallout 4 Soundtrack - Roy Brown - Good Rockin' Tonight [HQ].mp3",
+      "Fallout 4 Soundtrack - Roy Brown - Mighty Mighty Man [HQ].mp3",
+      "Fallout 4 Soundtrack - Sheldon Allman - Crawl Out Through The Fallout [HQ].mp3",
+      "Fallout 4 Soundtrack - Skeeter Davis - The End of the World [HQ].mp3",
+      "Fallout 4 Soundtrack - Tex Beneke - A Wonderful Guy [HQ].mp3",
+      "Fallout 4 Soundtrack - The Five Stars - Atom Bomb Baby [HQ].mp3",
+      "Fallout 4 Soundtrack - The Ink Spots - I Don't Want To Set The World on Fire [HQ].mp3",
+      "Fallout 4 Soundtrack - The Ink Spots - It's All Over But The Crying [HQ].mp3",
+      "Fallout 4 Soundtrack - The Ink Spots - Maybe [HQ].mp3",
+      "Fallout 4 Soundtrack - Warren Smith - Uranium Rock [HQ].mp3",
+      "Fallout 4 Soundtrack - Wynonie Harris - Grandma Plays The Numbers [HQ].mp3",
+      "Fallout New Vegas Radio - Blues for you.mp3",
+      "Fallout New Vegas Radio - Jazz Blues.mp3",
+      "Fallout New Vegas Radio - Jazz Club Blues.mp3",
+      "Fallout New Vegas Radio - Joe Cool.mp3",
+      "Fallout New Vegas Radio - Sleepy Town Blues.mp3",
+      "Fallout New Vegas Radio - Slow Bounce.mp3",
+      "Fallout New Vegas Radio - Slow Sax.mp3",
+      "Fallout New Vegas Radio - Why Don't You Do Right.mp3",
+      "Fallout New Vegas Soundtrack - Begin Again.mp3",
+      "Flight Facilities - Crave You (Adventure Club Dubstep Remix) (feat. Giselle).mp3",
+      "Fly Me to the Moon annapantsu.mp3",
+      "Fly Me to the Moon.mp3",
+      "Glenn Gatsby & Wolfgang Lohr - Don't Drink & Jive   Electro Swing.mp3",
+      "Hallo Mister X  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Hard to Resist.mp3",
+      "Heartaches by the Number  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Hebbie Jeebies.mp3",
+      "It's a Sin to Tell a Lie  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Jingle, Jangle, Jingle  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Johnny Guitar  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "London Grammar - Nightcall.mp3",
+      "Loser, Baby.mp3",
+      "Love Me as Though There Were No Tomorrow  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Mad About the Boy  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Manhattan  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Matthew Wilder - Break My Stride_.mp3",
+      "Milenberg Joys.mp3",
+      "Mood Indigo.mp3",
+      "OR3O - All Eyes On Me_.mp3",
+      "Original Dixieland One Step.mp3",
+      "Puttin' on the Ritz.mp3",
+      "Reindeer Rag.mp3",
+      "Ring-A-Ding-Ding Frank Sinatra_.mp3",
+      "Sidewalk Blues.mp3",
+      "Sit and Dream  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Slow Bounce  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Some of These Days.mp3",
+      "Something's Gotta Give  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Stars of the Midnight Range  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Stephen Sanchez - Until I Found You.mp3",
+      "Strahlende Trompete  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Strange Magic.mp3",
+      "Superman.mp3",
+      "That da da Strain.mp3",
+      "The McMash Clan - Swing Break feat. Kate Mullins.mp3",
+      "The Three Suns - Worry Worry Worry.mp3",
+      "The Upside-Down World.mp3",
+      "The Wang Wang Blues.mp3",
+      "Tomorrow Is A Long Time.mp3",
+      "Von Spanien Nach Südamerika  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Wasteland Wailers - Fly Like You (feat. Brittany Church as Velvet Remedy).mp3",
+      "Watermelon Sugar (Cover).mp3",
+      "Where Have You Been All My Life  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Why Don't You Do Right  with Mr. New Vegas intro (Radio New Vegas).mp3",
+      "Wolverine Blues.mp3"
+    ]
+  },
+
+  "The Mix": {
+    folder: "The Mix/",
+    tracks: [
+      "Aerosmith - I Don't Want To Miss A Thing.mp3",
+      "Biz Markie - Just A Friend.mp3",
+      "Blur - Song 2.mp3",
+      "Cypress Hill - Insane In The Brain.mp3",
+      "EMF - Unbelievable.mp3",
+      "Haddaway - What Is Love.mp3",
+      "Men Without Hats - The Safety Dance.mp3",
+      "Montell Jordan - This Is How We Do It.mp3",
+      "Outkast - B.O.B (Bombs Over Baghdad).mp3",
+      "Paula Abdul - Opposites Attract.mp3",
+      "Robert Palmer - Simply Irresistible.mp3",
+      "Stan Bush - The Touch.mp3",
+      "The Pharcyde - Oh Shit.mp3",
+      "The Presidents Of The United States Of America - Lump.mp3",
+      "The Romantics - Talking In Your Sleep.mp3",
+      "Thin Lizzy - The Boys Are Back In Town.mp3"
+    ]
+  },
+  "Church Vibes": {
+    "folder": "church vibes/",
+    "tracks": [
+      "136.1 Hz   Healing Frequency   Tuning Fork   Stress Relief & Relaxation   Pure Tone.m4a",
+      "Lamb of God.m4a",
+      "Heart Chakra 136 Hz (136.1 Hz) Pure Tone   Anahata Chakra   The Platonic Frequencies   OM Frequency.m4a",
+      "Deep OM Mantra Sleep Music & Rain   963Hz Singing Bowl   Third Eye Opening & Pineal Gland Activation.m4a",
+      "Pure Tone  261.6 hz  C Major  Music Note.m4a",
+      "O Come Let Us Sing to the Lord - Charles Callahan.m4a",
+      "Preces   O Lord Open Thou Our Lips.m4a",
+      "Let Us Bless The Lord.m4a",
+      "Locke O Be Joyful in the Lord All Ye Lands.m4a",
+      "O Gracious Light.m4a",
+      "6.11.23 Kenneth Peterson  SCHOLA  O God Make Speed To Save Us.m4a",
+      "Venite Come let us sing to the Lord by Jack Noble White.m4a",
+      "Hymntune - Epiphany Hymn.m4a",
+      "Josh Groban - O Holy Night [with lyrics].m4a",
+      "We Praise you O God (KREMSER).m4a",
+      "Lamb Of God (Catholic Hymn) -Lyrics-.m4a",
+      "Praise to the Lord the Almighty (with Orchestra)    The Tabernacle Choir.m4a",
+      "Now Thank We All Our God   The Tabernacle Choir.m4a",
+      "CROWN CHAKRA HEALING Hang Drum Music   Kundalini Awakening Music   Powerful Positive Vibes.m4a",
+      "Crystal Chakra Meditation with Antique Tibetan Singing Bowls.m4a",
+      "For The Beauty Of The Earth (Hymn 429)   Grace Community Church Congregation & Orchestra.m4a",
+      "HEART CHAKRA Healing Vibrations Ocean Sounds   Manifest Love Energy Attract Love.m4a",
+      "13 Chakras Activation Sound Bath - Uniting the Bodymind with the Higher Realms   13 Frequencies.m4a",
+      "Harmony of YIN & YANG   Spiritual Energy Balance & Flow   Deep Healing 432Hz Meditation Sleep Music.m4a",
+      "6 Hours of Indian Meditation Music for Positive Energy Relax Mind Body Relaxing Flute Music Indian K.m4a",
+      "Earth's Ohm 7.83 Hz Deep Theta Binaural Beat ( Schumann Resonance for 12 Hours ).m4a",
+      "all 7 Chakra 10 min.m4a",
+      "174 Hz Solfeggio Pain Relief Pure Tone Sleep Music   Deep Healing Solfeggio Frequency.m4a"
+    ]   
+  }
+};
+
+/* small helper: detect numeric-leading station key */
+function stationIsCyber(stationKey) {
+  return /^\s*\d/.test(stationKey);
+}
+
+/* parse a trailing color suffix from a station key:
+   - Supports old codes: r g p yo b
+   - Supports new codes (with optional number): rp, hp, y, lg, w, mg  (each may be followed by digits, e.g. mg3)
+   - Returns { baseName, colorCode, colorNumber }
+*/
+function parseColorSuffix(key) {
+  if (!key || typeof key !== 'string') return { baseName: key, colorCode: null, colorNumber: null };
+  const trimmed = key.replace(/\s+$/, '');
+  const parts = trimmed.split(' ');
+  if (parts.length < 2) return { baseName: key, colorCode: null, colorNumber: null };
+
+  // last token might be a color or color+number
+  const raw = parts[parts.length - 1].toLowerCase();
+
+  // known map including older and newer short codes
+  const known = {
+    r: 'red', g: 'green', p: 'purple', yo: 'amber', b: 'lightBlue',
+    rp: 'rainbowPink', hp: 'hotPink', y: 'yellow', lg: 'lymeGreen', w: 'white', mg: 'magenta'
+  };
+
+  // detect pattern like "mg3" or "rp0" or "mg" or "mg00"
+  const m = raw.match(/^([a-z]+)(\d*)$/);
+  if (m) {
+    const code = m[1];
+    const number = m[2] || null;
+    if (known[code]) {
+      const base = parts.slice(0, parts.length - 1).join(' ');
+      return { baseName: base, colorCode: known[code], colorNumber: number !== null ? (number === '' ? '0' : number) : null };
+    }
+  }
+
+  // fallback: no recognized suffix
+  return { baseName: key, colorCode: null, colorNumber: null };
+}
+
+/* Build stations UI */
+function buildStations() {
+  stationsEl.innerHTML = '';
+  Object.keys(STATIONS).forEach((k) => {
+    const station = STATIONS[k];
+    const el = document.createElement('div');
+    el.className = 'station';
+    el.setAttribute('data-key', k);
+
+    const left = document.createElement('div');
+    left.className = 'stationRow';
+
+    const colorSw = document.createElement('div');
+    colorSw.className = 'stationColor';
+
+    // parse display name and optional suffix-provided color
+    const parsed = parseColorSuffix(k);
+    const displayName = parsed.baseName;
+
+    // decide color:
+    let colorPick = null;
+    if (parsed.colorCode) {
+      colorPick = COLORS[parsed.colorCode];
+    } else {
+      // If this station was not part of the original list, default it to lightBlue
+      if (!ORIGINAL_KEYS.includes(k)) {
+        colorPick = COLORS.lightBlue;
+      } else {
+        // preserve existing logic for original stations:
+        if (k === 'pipboy') colorPick = COLORS.pipboy;
+        else if (stationIsCyber(k)) colorPick = COLORS.cyberRed;
+        else colorPick = COLORS.saintsPurple;
+      }
+    }
+
+    // apply swatch color (use glow where available)
+    colorSw.style.background = (colorPick && colorPick.glow) ? colorPick.glow : COLORS.lightBlue.glow;
+
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = displayName;
+
+    left.appendChild(colorSw);
+    left.appendChild(name);
+
+    const tag = document.createElement('div');
+    tag.className = 'small';
+    tag.textContent = station.folder;
+
+    // store colorNumber if present for later use/debug/automation
+    if (parsed.colorNumber !== null) {
+      el.dataset.colorNumber = parsed.colorNumber;
+    }
+
+    el.appendChild(left);
+    el.appendChild(tag);
+
+    el.addEventListener('click', () => {
+      uiSounds.select.currentTime = 0; uiSounds.select.play().catch(()=>{});
+      setStation(k);
+      // after clicking a station, ensure it's scrolled into view and nudged if needed
+      requestAnimationFrame(() => {
+        const active = stationsEl.querySelector(`.station[data-key="${k}"]`);
+        if (active) {
+          active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          nudgeStationIntoViewIfAtBottom(active);
+        }
+      });
+    });
+
+    stationsEl.appendChild(el);
+  });
+
+  // ensure last station isn't occluded by adding padding-bottom equal to one station height
+  requestAnimationFrame(() => {
+    const one = stationsEl.querySelector('.station');
+    if (one) {
+      const h = one.getBoundingClientRect().height;
+      stationsEl.style.paddingBottom = h + 'px';
+      stationsEl.dataset.stationHeight = h;
+    }
+  });
+}
+
+/* Helper that nudges a station element upward by one station-height if it's touching the bottom edge */
+function nudgeStationIntoViewIfAtBottom(el) {
+  try {
+    const containerRect = stationsEl.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const stationH = Number(stationsEl.dataset.stationHeight) || (elRect.height || 0);
+
+    // If the element's bottom is within 2px of container bottom (i.e., it's at bottom), nudge scrollTop
+    if (Math.abs(elRect.bottom - containerRect.bottom) <= 2 + (stationH * 0.25)) {
+      stationsEl.scrollTop = Math.max(0, stationsEl.scrollTop - stationH);
+    }
+  } catch (e) {
+    // silently ignore in case of layout race
+  }
+}
+
+/* Given a station key, derive a theme object */
+function getThemeForStationKey(key) {
+  const parsed = parseColorSuffix(key);
+  if (parsed.colorCode && COLORS[parsed.colorCode]) {
+    return COLORS[parsed.colorCode];
+  }
+  if (!ORIGINAL_KEYS.includes(key)) {
+    return COLORS.lightBlue;
+  }
+  if (key === 'pipboy') return COLORS.pipboy;
+  if (stationIsCyber(key)) return COLORS.cyberRed;
+  return COLORS.saintsPurple;
+}
+
+/* Apply visual theme based on station (updates surrounding and text) */
+function applyThemeForStation(key) {
+  const theme = getThemeForStationKey(key);
+
+  document.documentElement.style.setProperty('--bg', theme.bg);
+  document.documentElement.style.setProperty('--panel', theme.panel);
+  document.documentElement.style.setProperty('--glow', theme.glow);
+  document.documentElement.style.setProperty('--accent', theme.accent);
+  document.documentElement.style.setProperty('--text', theme.text);
+
+  progBar.style.background = `linear-gradient(90deg, ${theme.accent}, #fff2ff)`;
+  const dot = document.querySelector('.dot');
+  if (dot) dot.style.background = theme.glow;
+}
+
+/* load tracks for station into TRACKS and render left list */
+function loadStationTracks(key) {
+  const station = STATIONS[key];
+  TRACKS = station.tracks.map(f => ({ file: f, title: f.replace(/\.(mp3|wav|m4a)$/i, '') }));
+  filteredIndexes = TRACKS.map((_,i)=>i);
+  buildList();
+  currentFolderEl.textContent = station.folder;
+  currentStationKey = key;
+  document.querySelectorAll('div.station').forEach(n => {
+    n.classList.toggle('active', n.getAttribute('data-key') === key);
+  });
+  applyThemeForStation(key);
+
+  requestAnimationFrame(() => {
+    const one = stationsEl.querySelector('.station');
+    if (one) {
+      const h = one.getBoundingClientRect().height;
+      stationsEl.style.paddingBottom = h + 'px';
+      stationsEl.dataset.stationHeight = h;
+    }
+  });
+}
+
+/* build left list from TRACKS */
+function buildList() {
+  listEl.innerHTML = '';
+  filteredIndexes.forEach((idx) => {
+    const t = TRACKS[idx];
+    const el = document.createElement('div');
+    el.className = 'track';
+    el.setAttribute('data-idx', idx);
+    el.tabIndex = 0;
+    el.innerHTML = `<div class="meta">${escapeHtml(t.title)}</div><div class="len">${escapeHtml(t.file)}</div>`;
+
+    el.addEventListener('mouseenter', ()=>{
+      uiSounds.cursor.currentTime = 0; uiSounds.cursor.play().catch(()=>{});
+      highlightRow(el, idx);
+      uiSounds.scroll.currentTime = 0; uiSounds.scroll.play().catch(()=>{});
+    });
+    el.addEventListener('click', ()=>{
+      uiSounds.select.currentTime = 0; uiSounds.select.play().catch(()=>{});
+      setNowPlaying(idx);
+      const pos = playOrder.indexOf(idx);
+      playPos = (pos === -1) ? 0 : pos;
+      attemptPlay();
+    });
+    el.addEventListener('focus', ()=>{
+      uiSounds.cursor.currentTime = 0; uiSounds.cursor.play().catch(()=>{});
+      highlightRow(el, idx);
+    });
+    listEl.appendChild(el);
+  });
+  buildPlayOrder();
+  refreshActiveHighlight();
+}
+
+function buildPlayOrder() {
+  playOrder = filteredIndexes.slice();
+  if (shuffleEnabled) shuffleArray(playOrder);
+  const currentId = (currentIndex >= 0) ? currentIndex : null;
+  if (currentId !== null) {
+    const pos = playOrder.indexOf(currentId);
+    playPos = (pos === -1) ? 0 : pos;
+  } else playPos = 0;
+}
+function shuffleArray(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/* UI helpers */
+function refreshActiveHighlight() {
+  document.querySelectorAll('div.track').forEach(n => {
+    n.classList.toggle('active', Number(n.getAttribute('data-idx')) === currentIndex);
+  });
+}
+function highlightRow(el, idx) {
+  document.querySelectorAll('.track').forEach(n=>n.classList.remove('focused'));
+  el.classList.add('focused');
+  el.scrollIntoView({block:'nearest',behavior:'smooth'});
+}
+
+/* station switch */
+function setStation(key) {
+  if (!STATIONS[key]) return;
+  loadStationTracks(key);
+  currentIndex = -1;
+  nowTitle.textContent = 'Not Playing';
+  nowArtist.textContent = '-';
+  nowLen.textContent = '00:00';
+  progBar.style.width = '0%';
+
+  requestAnimationFrame(() => {
+    const active = stationsEl.querySelector(`.station[data-key="${key}"]`);
+    if (active) {
+      active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      nudgeStationIntoViewIfAtBottom(active);
+    }
+  });
+}
+
+/* playback helpers */
+function setNowPlaying(idx) {
+  currentIndex = idx;
+  const station = STATIONS[currentStationKey];
+  musicAudio.src = 'audio/music/' + station.folder + TRACKS[idx].file;
+  musicAudio.load();
+  nowTitle.textContent = TRACKS[idx].title;
+  nowArtist.textContent = TRACKS[idx].file;
+  nowLen.textContent = '00:00';
+  status.textContent = 'Loading...';
+  refreshActiveHighlight();
+}
+function playIndex(idx) {
+  setNowPlaying(idx);
+  attemptPlay();
+}
+
+/* centralized play attempt that shows tap-to-enable overlay if blocked */
+function attemptPlay() {
+  musicAudio.play().then(()=>{ status.textContent = 'Playing'; }).catch(()=>{ status.textContent = 'Play blocked (tap to enable)'; showTapToEnable(); });
+}
+
+/* Controls wiring */
+document.getElementById('btnPlay').addEventListener('click', () => {
+  if (musicAudio.paused && currentIndex>=0) {
+    attemptPlay();
+  } else if (!musicAudio.paused) {
+    musicAudio.pause();
+  } else if (currentIndex<0 && TRACKS.length>0) {
+    playIndex(playOrder[playPos] || 0);
+  }
+});
+document.getElementById('btnNext').addEventListener('click', () => { uiSounds.select.currentTime=0; uiSounds.select.play().catch(()=>{}); advance(1); });
+document.getElementById('btnPrev').addEventListener('click', () => { uiSounds.select.currentTime=0; uiSounds.select.play().catch(()=>{}); advance(-1); });
+
+btnShuffle.addEventListener('click', (e) => {
+  shuffleEnabled = !shuffleEnabled;
+  e.currentTarget.classList.toggle('active', shuffleEnabled);
+  buildPlayOrder();
+});
+
+/* volume input (value displayed) */
+volInput.addEventListener('input', (e) => {
+  musicAudio.volume = Number(e.target.value);
+  const pct = Math.round(Number(e.target.value) * 100);
+  volVal.textContent = pct + '%';
+});
+
+/* advance tracks */
+function advance(step) {
+  if (!playOrder || playOrder.length === 0) return;
+  if (currentIndex < 0) {
+    playPos = 0;
+    playIndex(playOrder[playPos]);
+    return;
+  }
+  playPos = playOrder.indexOf(currentIndex);
+  if (playPos === -1) playPos = 0;
+  playPos = (playPos + step + playOrder.length) % playOrder.length;
+  playIndex(playOrder[playPos]);
+}
+
+/* audio events */
+musicAudio.addEventListener('timeupdate', () => {
+  if (musicAudio.duration && !isNaN(musicAudio.duration)) {
+    const pct = (musicAudio.currentTime / musicAudio.duration) * 100;
+    progBar.style.width = pct + '%';
+    nowLen.textContent = formatTime(musicAudio.currentTime) + ' / ' + formatTime(musicAudio.duration);
+    const trackRect = progTrack.getBoundingClientRect();
+    progHandle.style.left = `calc(${pct}% - 7px)`;
+  }
+});
+musicAudio.addEventListener('ended', () => {
+  status.textContent = 'Ended';
+  advance(1);
+});
+musicAudio.addEventListener('loadedmetadata', () => {
+  nowLen.textContent = '00:00 / ' + (musicAudio.duration ? formatTime(musicAudio.duration) : '00:00');
+  status.textContent = 'Ready';
+});
+
+/* keyboard navigation for left list */
+listEl.addEventListener('keydown', (ev) => {
+  const focused = document.activeElement;
+  let idx = -1;
+  if (focused && focused.classList && focused.classList.contains('track')) idx = Number(focused.getAttribute('data-idx'));
+  else if (currentIndex>=0) idx = currentIndex;
+
+  if (ev.key === 'ArrowDown') {
+    ev.preventDefault();
+    uiSounds.cursor.currentTime = 0; uiSounds.cursor.play().catch(()=>{});
+    const pos = filteredIndexes.indexOf(idx);
+    const nextPos = (pos === -1) ? 0 : Math.min(filteredIndexes.length-1, pos+1);
+    const nextIdx = filteredIndexes[nextPos];
+    const nextEl = document.querySelector(`.track[data-idx="${nextIdx}"]`);
+    if (nextEl) nextEl.focus();
+  } else if (ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    uiSounds.cursor.currentTime = 0; uiSounds.cursor.play().catch(()=>{});
+    const pos = filteredIndexes.indexOf(idx);
+    const prevPos = (pos === -1) ? 0 : Math.max(0, pos-1);
+    const prevIdx = filteredIndexes[prevPos];
+    const prevEl = document.querySelector(`.track[data-idx="${prevIdx}"]`);
+    if (prevEl) prevEl.focus();
+  } else if (ev.key === 'Enter') {
+    ev.preventDefault();
+    if (focused && focused.classList && focused.classList.contains('track')) {
+      uiSounds.select.currentTime = 0; uiSounds.select.play().catch(()=>{});
+      const idxNum = Number(focused.getAttribute('data-idx'));
+      setNowPlaying(idxNum);
+      const pos = playOrder.indexOf(idxNum);
+      playPos = (pos === -1) ? 0 : pos;
+      attemptPlay();
+    }
+  }
+});
+
+listEl.addEventListener('click', () => {
+  const first = listEl.querySelector('div.track');
+  if (first) first.focus();
+});
+
+/* Search/filter for left list */
+document.getElementById('search').addEventListener('input', (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  filteredIndexes = TRACKS.map((t,i)=>({t,i})).filter(x => x.t.title.toLowerCase().includes(q) || x.t.file.toLowerCase().includes(q)).map(x=>x.i);
+  buildList();
+});
+
+/* Progress bar: clickable & draggable seeking */
+let isDragging = false;
+
+function seekFromEvent(ev) {
+  const rect = progTrack.getBoundingClientRect();
+  const clientX = (ev.touches && ev.touches[0]) ? ev.touches[0].clientX : ev.clientX;
+  let x = clientX - rect.left;
+  x = Math.max(0, Math.min(rect.width, x));
+  const pct = x / rect.width;
+  if (musicAudio.duration && !isNaN(musicAudio.duration)) {
+    musicAudio.currentTime = pct * musicAudio.duration;
+  }
+}
+
+progTrack.addEventListener('mousedown', (ev) => {
+  isDragging = true;
+  progTrack.classList.add('dragging');
+  seekFromEvent(ev);
+  ev.preventDefault();
+});
+window.addEventListener('mousemove', (ev) => {
+  if (!isDragging) return;
+  seekFromEvent(ev);
+});
+window.addEventListener('mouseup', () => {
+  if (!isDragging) return;
+  isDragging = false;
+  progTrack.classList.remove('dragging');
+});
+progTrack.addEventListener('touchstart', (ev) => {
+  isDragging = true;
+  progTrack.classList.add('dragging');
+  seekFromEvent(ev);
+  ev.preventDefault();
+}, {passive:false});
+window.addEventListener('touchmove', (ev) => {
+  if (!isDragging) return;
+  seekFromEvent(ev);
+}, {passive:false});
+window.addEventListener('touchend', () => {
+  if (!isDragging) return;
+  isDragging = false;
+  progTrack.classList.remove('dragging');
+});
+
+/* Tap-to-enable overlay for iOS-like webviews */
+function showTapToEnable() {
+  if (document.getElementById('tapEnable')) return;
+  const o = document.createElement('div');
+  o.id = 'tapEnable';
+  o.style.position = 'fixed';
+  o.style.left = '0';
+  o.style.right = '0';
+  o.style.top = '0';
+  o.style.bottom = '0';
+  o.style.display = 'flex';
+  o.style.alignItems = 'center';
+  o.style.justifyContent = 'center';
+  o.style.background = 'rgba(0,0,0,0.6)';
+  o.style.zIndex = 9999;
+  o.innerHTML = '<button style="padding:14px 20px;border-radius:8px;border:0;background:#fff;color:#000;font-weight:700">Tap to enable audio</button>';
+  document.body.appendChild(o);
+  o.addEventListener('click', () => {
+    musicAudio.play().then(()=>musicAudio.pause()).catch(()=>{});
+    o.remove();
+  }, { once: true });
+}
+
+/* Utilities */
+function formatTime(s) { if (!s || isNaN(s)) return '00:00'; const m = Math.floor(s/60); const sec = Math.floor(s%60); return String(m).padStart(2,'0') + ':' + String(sec).padStart(2,'0'); }
+function escapeHtml(str){ return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* Initialize UI */
+buildStations();
+setStation('pipboy');
+
+let scrollTimeout;
+listEl.addEventListener('wheel', () => { uiSounds.scroll.currentTime = 0; uiSounds.scroll.play().catch(()=>{}); clearTimeout(scrollTimeout); scrollTimeout = setTimeout(()=>{},120); });
+listEl.addEventListener('touchmove', () => { uiSounds.scroll.currentTime = 0; uiSounds.scroll.play().catch(()=>{}); });
+
+window.addEventListener('load', () => {
+  setTimeout(()=>{
+    listEl.focus();
+    /* re-apply stations and station heights in case webview had an initial layout race */
+    buildStations();
+    setStation(currentStationKey);
+  }, 300);
+});
+</script>
+</body>
+</html>
